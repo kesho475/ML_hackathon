@@ -53,7 +53,8 @@ def compact_dtypes(frame):
     for column in FLOAT_COLUMNS:
         frame[column] = frame[column].astype(np.float32)
 
-    frame["label"] = frame["label"].astype(np.int8)
+    if "label" in frame:
+        frame["label"] = frame["label"].astype(np.int8)
     frame["dist_rank"] = frame["dist_rank"].astype(np.int8)
 
     for column in INT32_COLUMNS:
@@ -115,16 +116,15 @@ def fallback_candidates(tree, points, point_id, radius, k, line_count):
     return candidate_idx[order], candidate_dist[order]
 
 
-def build_trip(trip_dir, radius, k):
+def trip_geometry(trip_dir):
+    """Load one trip and project it to its own UTM zone; road arcs become LineStrings in metres.
+    The .route list is loaded (io_utils reads it if present) but only reference_arcs() ever uses it."""
     trip_id = os.path.basename(os.path.normpath(trip_dir))
 
     track, nodes, arcs, route = load_trip(trip_dir)
 
     if len(track) == 0 or len(nodes) == 0 or len(arcs) == 0:
         raise ValueError(f"Empty data in trip {trip_id}")
-
-    if len(route) == 0:
-        raise ValueError(f"Missing reference route in trip {trip_id}")
 
     lon = track["lon"].to_numpy(dtype=float)
     lat = track["lat"].to_numpy(dtype=float)
@@ -185,6 +185,21 @@ def build_trip(trip_dir, radius, k):
 
     px, py = transformer.transform(lon, lat)
     points = shapely.points(np.column_stack((px, py)))
+
+    return {
+        "trip_id": trip_id, "track": track, "nodes": nodes, "arcs": arcs, "route": route,
+        "timestamps": timestamps, "arc_ids": arc_ids, "coords": coords, "lines": lines,
+        "arc_lengths": arc_lengths, "px": px, "py": py, "points": points,
+    }
+
+
+def build_features(trip_dir, radius, k):
+    """Candidates + the 9 features for EVERY GPS point of a trip. Never touches the route / labels.
+    Returns (frame without the label column, geometry dict from trip_geometry)."""
+    geo = trip_geometry(trip_dir)
+    trip_id, arc_ids, coords = geo["trip_id"], geo["arc_ids"], geo["coords"]
+    lines, arc_lengths, px, py = geo["lines"], geo["arc_lengths"], geo["px"], geo["py"]
+    points, timestamps = geo["points"], geo["timestamps"]
 
     tree = STRtree(lines)
 
@@ -272,55 +287,6 @@ def build_trip(trip_dir, radius, k):
 
     candidate_arc_ids = arc_ids[line_idx]
 
-    route_ids = np.asarray(route, dtype=np.int64)
-    route_ids = np.unique(
-        route_ids[
-            (route_ids >= 0)
-            & (route_ids < len(arcs))
-        ]
-    )
-
-    route_mask = np.isin(arc_ids, route_ids)
-    route_lines = lines[route_mask]
-    route_arc_ids = arc_ids[route_mask]
-
-    if len(route_lines) == 0:
-        raise ValueError(
-            f"No valid reference-route geometries in {trip_id}"
-        )
-
-    route_tree = STRtree(route_lines)
-    nearest_pairs = route_tree.query_nearest(
-        points,
-        all_matches=False
-    )
-
-    reference_arc = np.full(
-        len(points),
-        -1,
-        dtype=np.int64
-    )
-
-    reference_arc[nearest_pairs[0]] = (
-        route_arc_ids[nearest_pairs[1]]
-    )
-
-    labels = (
-        candidate_arc_ids == reference_arc[point_idx]
-    ).astype(np.int8)
-
-    candidate_hit = np.zeros(len(points), dtype=bool)
-    valid_points = reference_arc[point_idx] >= 0
-
-    np.logical_or.at(
-        candidate_hit,
-        point_idx[valid_points],
-        candidate_arc_ids[valid_points]
-        == reference_arc[point_idx[valid_points]]
-    )
-
-    missed = int(np.count_nonzero(~candidate_hit))
-
     delta_t = np.diff(
         timestamps,
         prepend=timestamps[0]
@@ -384,7 +350,6 @@ def build_trip(trip_dir, radius, k):
         "trip_id": trip_id,
         "point_idx": point_idx,
         "cand_arc_id": candidate_arc_ids,
-        "label": labels,
         "dist_m": distances,
         "dist_rank": ranks,
         "dist_minus_min": distances - min_dist[point_idx],
@@ -396,10 +361,75 @@ def build_trip(trip_dir, radius, k):
         "n_cands": n_cands[point_idx]
     })
 
-    result = result[OUTPUT_COLUMNS]
-    result = compact_dtypes(result)
+    return compact_dtypes(result), geo
 
-    return result, missed, len(points)
+
+def reference_arcs(geo):
+    """Reference arc per GPS point = nearest arc among the trip's ROUTE arcs (our labelling assumption).
+    Uses the .route list: training labels and server-side evaluation only, never prediction."""
+    arc_ids, lines, points = geo["arc_ids"], geo["lines"], geo["points"]
+
+    route_ids = np.asarray(geo["route"], dtype=np.int64)
+    route_ids = np.unique(
+        route_ids[
+            (route_ids >= 0)
+            & (route_ids < len(geo["arcs"]))
+        ]
+    )
+
+    route_mask = np.isin(arc_ids, route_ids)
+    route_lines = lines[route_mask]
+    route_arc_ids = arc_ids[route_mask]
+
+    if len(route_lines) == 0:
+        raise ValueError(
+            f"No valid reference-route geometries in {geo['trip_id']}"
+        )
+
+    route_tree = STRtree(route_lines)
+    nearest_pairs = route_tree.query_nearest(
+        points,
+        all_matches=False
+    )
+
+    reference_arc = np.full(
+        len(points),
+        -1,
+        dtype=np.int64
+    )
+
+    reference_arc[nearest_pairs[0]] = (
+        route_arc_ids[nearest_pairs[1]]
+    )
+
+    return reference_arc
+
+
+def build_trip(trip_dir, radius, k):
+    result, geo = build_features(trip_dir, radius, k)
+    reference_arc = reference_arcs(geo)
+
+    point_idx = result["point_idx"].to_numpy()
+    labels = (
+        result["cand_arc_id"].to_numpy() == reference_arc[point_idx]
+    ).astype(np.int8)
+
+    n_points = len(geo["points"])
+    candidate_hit = np.zeros(n_points, dtype=bool)
+    valid_points = reference_arc[point_idx] >= 0
+
+    np.logical_or.at(
+        candidate_hit,
+        point_idx[valid_points],
+        labels[valid_points].astype(bool)
+    )
+
+    missed = int(np.count_nonzero(~candidate_hit))
+
+    result.insert(3, "label", labels)
+    result = compact_dtypes(result)[OUTPUT_COLUMNS]
+
+    return result, missed, n_points
 
 
 def build_partition(directory, radius, k):

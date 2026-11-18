@@ -5,3 +5,7 @@ radius_m: 200
 seed: 42
 cv_folds: 5
 exclude_train_trips: ["00000033", "00000054"]
+
+# API (Laptop 1): folder of trips the API serves; point at the 10 evaluator trips later. Decoder: "classifier" or "hmm".
+eval_trips_dir: data/raw/student_test
+decoder: classifier
