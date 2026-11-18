@@ -10,17 +10,21 @@ Output:
     pd.Series indexed by point_idx, containing predicted cand_arc_id.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import yaml
 
 
-# Tuned using the 10 student_test trips.
-# Best point-weighted Top-1: 0.820407
-# See results/csv/hmm_param_search.csv
+# Parameters come from the "hmm:" section of configs/config.yaml (tuned on the 10 student_test trips,
+# best point-weighted Top-1 0.8241; see results/csv/hmm_param_search.csv). Fallbacks equal the tuned values.
+with open(Path(__file__).resolve().parents[1] / "configs" / "config.yaml", encoding="utf-8") as _f:
+    _HMM = (yaml.safe_load(_f) or {}).get("hmm", {})
 
-TRANSITION_FLOOR = 1e-10
-GAP_THRESHOLD = 60.0
-EMISSION_EPSILON = 1e-12
+TRANSITION_FLOOR = float(_HMM.get("transition_floor", 1e-10))
+GAP_THRESHOLD = float(_HMM.get("gap_threshold_s", 60.0))
+EMISSION_EPSILON = float(_HMM.get("emission_epsilon", 1e-12))
 
 
 def viterbi_decode(

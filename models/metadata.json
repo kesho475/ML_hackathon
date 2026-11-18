@@ -5,8 +5,8 @@
     "model_type": "HistGradientBoostingClassifier",
     "framework": "scikit-learn",
     "sklearn_version": "1.7.2",
-    "joblib_version": "1.5.3",
-    "numpy_version": "2.2.6",
+    "joblib_version": "1.6.0",
+    "numpy_version": "2.5.5",
     "features": [
         "dist_m",
         "dist_rank",
@@ -20,5 +20,14 @@
     ],
     "feature_count": 9,
     "preprocessing_included": false,
-    "decoder": "Configured separately through config.yaml"
+    "decoder": "Configured separately through config.yaml",
+    "python_version": "3.14.4",
+    "produced_by": "src/bayes_opt.py (model refit on all train with configs/best_params.yaml)",
+    "hyperparameters": {
+        "learning_rate": 0.08243496418293915,
+        "max_iter": 120,
+        "max_leaf_nodes": 40,
+        "min_samples_leaf": 115,
+        "l2_regularization": 2.6119407782738846
+    }
 }
