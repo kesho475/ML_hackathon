@@ -16,3 +16,10 @@ def load_trip(trip_dir):
     route_file = p + ".route"
     route = _read(route_file, ["arc_id"])["arc_id"].astype(int).tolist() if os.path.exists(route_file) else []
     return track, nodes, arcs, route
+
+
+def get_utm_crs(lon, lat):
+    # Every trip is projected to its own UTM zone: trips span many countries and both
+    # hemispheres, so one fixed EPSG would distort distances. Pass the trip's mean track lon/lat.
+    zone = int((lon + 180) / 6) + 1
+    return f"EPSG:{(32600 if lat >= 0 else 32700) + zone}"

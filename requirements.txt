@@ -10,3 +10,5 @@ matplotlib
 pyarrow
 joblib
 pyyaml
+jupyter
+ipykernel

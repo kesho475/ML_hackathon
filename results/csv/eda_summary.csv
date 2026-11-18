@@ -1,0 +1,15 @@
+,value
+trips train/student_test,80/10
+GPS pts/trip median train,1529.0
+GPS pts/trip median student_test,1420.0
+dt==1s % (all),96.68
+trips with >5s gap,47/90
+distinct UTM zones,25
+nodes/trip median,9305.0
+arcs/trip median,18761.5
+median weak comps/trip,19.0
+isolated nodes total,0
+route chain % median,100.0
+GPS->route dist median m (train),5.61
+GPS->route dist p95 m (train),140.27
+% GPS within 50 m of route (train),89.17
