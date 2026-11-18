@@ -1,0 +1,13 @@
+data/raw/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+
+Student folder/
+data/raw/
+PathSnap_student_materials/
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+*.zip
