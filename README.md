@@ -29,7 +29,7 @@ Laptop 1 (model + API). Needs `models/final_model.joblib` and the trips in `data
 - `GET /health`, `GET /trips`, `POST /predict` with `{"trip_id": "00000000"}`.
 - The trips served come from `eval_trips_dir` in `configs/config.yaml` (default `data/raw/student_test`).
 - Every request is logged to the terminal (time, client IP, endpoint, trip_id, n_points, top1, processing time).
-- The decoder (`decoder:` in the config) is `classifier`; the HMM registers itself in `DECODERS` in `src/pipeline.py`.
+- The decoder is `hmm` (HMM + Viterbi, `src/hmm.py`). The classifier-only decoder is still available: set `decoder: classifier` in `configs/config.yaml`. New decoders register in `DECODERS` in `src/pipeline.py`.
 
 ## Run the UI
 Laptop 2 (evaluator UI). It reads no data or models, only the API.
