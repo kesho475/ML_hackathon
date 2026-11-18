@@ -1,7 +1,6 @@
 train_dir: data/raw/train
 test_dir: data/raw/student_test
-crs: EPSG:32632   # UTM 32N: data is lon~8.6, lat~49.9 (Germany). 32637 (zone 37N) would be wrong.
 K: 8
-radius_m: 50
+radius_m: 200
 seed: 42
 cv_folds: 5
