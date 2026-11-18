@@ -4,3 +4,4 @@ K: 8
 radius_m: 200
 seed: 42
 cv_folds: 5
+exclude_train_trips: ["00000033", "00000054"]

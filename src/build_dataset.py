@@ -1,13 +1,12 @@
-
 import os
 import glob
+import time
 import yaml
 import numpy as np
 import pandas as pd
 import shapely
 
 from shapely import STRtree
-from scipy.spatial import cKDTree
 from pyproj import Transformer
 
 from io_utils import load_trip, get_utm_crs
@@ -32,6 +31,88 @@ OUTPUT_COLUMNS = [
     "label",
     *FEATURES
 ]
+
+FLOAT_COLUMNS = [
+    "dist_m",
+    "dist_minus_min",
+    "heading_diff",
+    "arc_len",
+    "pos_on_arc",
+    "speed",
+    "dt"
+]
+
+INT32_COLUMNS = [
+    "point_idx",
+    "cand_arc_id",
+    "n_cands"
+]
+
+
+def compact_dtypes(frame):
+    for column in FLOAT_COLUMNS:
+        frame[column] = frame[column].astype(np.float32)
+
+    frame["label"] = frame["label"].astype(np.int8)
+    frame["dist_rank"] = frame["dist_rank"].astype(np.int8)
+
+    for column in INT32_COLUMNS:
+        frame[column] = frame[column].astype(np.int32)
+
+    return frame
+
+
+def fallback_candidates(tree, points, point_id, radius, k, line_count):
+    point = points[point_id]
+
+    nearest_idx, nearest_dist = tree.query_nearest(
+        point,
+        all_matches=True,
+        return_distance=True
+    )
+
+    nearest_idx = np.asarray(nearest_idx, dtype=np.int64).reshape(-1)
+    nearest_dist = np.asarray(nearest_dist, dtype=float).reshape(-1)
+
+    if len(nearest_idx) >= k:
+        order = np.argsort(nearest_dist, kind="stable")[:k]
+        return nearest_idx[order], nearest_dist[order]
+
+    search_radius = max(
+        float(radius) * 2.0,
+        float(nearest_dist.min()) + 1e-6
+    )
+
+    while True:
+        pairs = tree.query(
+            point,
+            predicate="dwithin",
+            distance=search_radius
+        )
+
+        candidate_idx = np.asarray(pairs, dtype=np.int64).reshape(-1)
+
+        if len(candidate_idx) >= min(k, line_count):
+            break
+
+        if search_radius > 1e8:
+            candidate_idx = np.arange(line_count, dtype=np.int64)
+            break
+
+        search_radius *= 2.0
+
+    candidate_idx = np.unique(
+        np.concatenate((candidate_idx, nearest_idx))
+    )
+
+    candidate_dist = shapely.distance(
+        point,
+        tree.geometries.take(candidate_idx)
+    )
+
+    order = np.argsort(candidate_dist, kind="stable")[:k]
+
+    return candidate_idx[order], candidate_dist[order]
 
 
 def build_trip(trip_dir, radius, k):
@@ -73,7 +154,6 @@ def build_trip(trip_dir, radius, k):
     )
 
     node_xy = np.column_stack((node_x, node_y))
-
     arc_nodes = arcs.to_numpy(dtype=np.int64)
 
     valid_arcs = (
@@ -85,7 +165,6 @@ def build_trip(trip_dir, radius, k):
 
     arc_ids = np.flatnonzero(valid_arcs)
     arc_nodes = arc_nodes[valid_arcs]
-
     coords = node_xy[arc_nodes]
 
     lines = shapely.linestrings(coords)
@@ -105,10 +184,7 @@ def build_trip(trip_dir, radius, k):
         raise ValueError(f"No valid road segments in {trip_id}")
 
     px, py = transformer.transform(lon, lat)
-
-    points = shapely.points(
-        np.column_stack((px, py))
-    )
+    points = shapely.points(np.column_stack((px, py)))
 
     tree = STRtree(lines)
 
@@ -132,41 +208,34 @@ def build_trip(trip_dir, radius, k):
     )
 
     if len(missing):
-        midpoints = coords.mean(axis=1)
-        midpoint_tree = cKDTree(midpoints)
+        fallback_point_parts = []
+        fallback_line_parts = []
+        fallback_distance_parts = []
 
-        _, nearest = midpoint_tree.query(
-            np.column_stack((px[missing], py[missing])),
-            k=min(k, len(lines))
-        )
+        for point_id in missing:
+            nearest_lines, nearest_distances = fallback_candidates(
+                tree,
+                points,
+                int(point_id),
+                radius,
+                k,
+                len(lines)
+            )
 
-        nearest = np.asarray(nearest)
-
-        if nearest.ndim == 1:
-            nearest = nearest[:, None]
-
-        fallback_points = np.repeat(
-            missing,
-            nearest.shape[1]
-        )
-
-        fallback_lines = nearest.reshape(-1)
-
-        fallback_distances = shapely.distance(
-            points[fallback_points],
-            lines[fallback_lines]
-        )
+            fallback_point_parts.append(
+                np.full(len(nearest_lines), point_id, dtype=np.int64)
+            )
+            fallback_line_parts.append(nearest_lines)
+            fallback_distance_parts.append(nearest_distances)
 
         point_idx = np.concatenate(
-            (point_idx, fallback_points)
+            (point_idx, *fallback_point_parts)
         )
-
         line_idx = np.concatenate(
-            (line_idx, fallback_lines)
+            (line_idx, *fallback_line_parts)
         )
-
         distances = np.concatenate(
-            (distances, fallback_distances)
+            (distances, *fallback_distance_parts)
         )
 
     order = np.lexsort((distances, point_idx))
@@ -181,12 +250,7 @@ def build_trip(trip_dir, radius, k):
         return_counts=True
     )
 
-    min_dist = np.full(
-        len(points),
-        np.nan,
-        dtype=float
-    )
-
+    min_dist = np.full(len(points), np.nan, dtype=float)
     min_dist[unique_points] = distances[starts]
 
     ranks = (
@@ -208,11 +272,7 @@ def build_trip(trip_dir, radius, k):
 
     candidate_arc_ids = arc_ids[line_idx]
 
-    route_ids = np.asarray(
-        route,
-        dtype=np.int64
-    )
-
+    route_ids = np.asarray(route, dtype=np.int64)
     route_ids = np.unique(
         route_ids[
             (route_ids >= 0)
@@ -220,11 +280,7 @@ def build_trip(trip_dir, radius, k):
         ]
     )
 
-    route_mask = np.isin(
-        arc_ids,
-        route_ids
-    )
-
+    route_mask = np.isin(arc_ids, route_ids)
     route_lines = lines[route_mask]
     route_arc_ids = arc_ids[route_mask]
 
@@ -234,7 +290,6 @@ def build_trip(trip_dir, radius, k):
         )
 
     route_tree = STRtree(route_lines)
-
     nearest_pairs = route_tree.query_nearest(
         points,
         all_matches=False
@@ -251,15 +306,10 @@ def build_trip(trip_dir, radius, k):
     )
 
     labels = (
-        candidate_arc_ids
-        == reference_arc[point_idx]
+        candidate_arc_ids == reference_arc[point_idx]
     ).astype(np.int8)
 
-    candidate_hit = np.zeros(
-        len(points),
-        dtype=bool
-    )
-
+    candidate_hit = np.zeros(len(points), dtype=bool)
     valid_points = reference_arc[point_idx] >= 0
 
     np.logical_or.at(
@@ -269,13 +319,12 @@ def build_trip(trip_dir, radius, k):
         == reference_arc[point_idx[valid_points]]
     )
 
-    missed = np.count_nonzero(~candidate_hit)
+    missed = int(np.count_nonzero(~candidate_hit))
 
     delta_t = np.diff(
         timestamps,
         prepend=timestamps[0]
     )
-
     dt = np.maximum(delta_t, 0)
 
     movement = np.hypot(
@@ -283,16 +332,10 @@ def build_trip(trip_dir, radius, k):
         np.diff(py, prepend=py[0])
     )
 
-    speed = np.zeros(
-        len(points),
-        dtype=float
-    )
-
+    speed = np.zeros(len(points), dtype=float)
     valid_speed = delta_t > 0
-
     speed[valid_speed] = (
-        movement[valid_speed]
-        / delta_t[valid_speed]
+        movement[valid_speed] / delta_t[valid_speed]
     )
 
     gps_heading = np.degrees(
@@ -302,22 +345,30 @@ def build_trip(trip_dir, radius, k):
         )
     )
 
+    arc_dx = (
+        coords[line_idx, 1, 0]
+        - coords[line_idx, 0, 0]
+    )
+    arc_dy = (
+        coords[line_idx, 1, 1]
+        - coords[line_idx, 0, 1]
+    )
+
     arc_heading = np.degrees(
-        np.arctan2(
-            coords[line_idx, 1, 1]
-            - coords[line_idx, 0, 1],
-            coords[line_idx, 1, 0]
-            - coords[line_idx, 0, 0]
-        )
+        np.arctan2(arc_dy, arc_dx)
     )
 
     heading_diff = np.abs(
-        (
-            gps_heading[point_idx]
-            - arc_heading
-            + 180
-        ) % 360 - 180
+        (gps_heading[point_idx] - arc_heading + 180) % 360 - 180
     )
+
+    neutral_heading = (
+        (point_idx == 0)
+        | (movement[point_idx] < 1.0)
+        | (arc_lengths[line_idx] <= 0)
+    )
+
+    heading_diff[neutral_heading] = 90.0
 
     candidate_lines = lines[line_idx]
     candidate_points = points[point_idx]
@@ -327,11 +378,7 @@ def build_trip(trip_dir, radius, k):
         candidate_points
     ) / arc_lengths[line_idx]
 
-    positions = np.clip(
-        positions,
-        0,
-        1
-    )
+    positions = np.clip(positions, 0, 1)
 
     result = pd.DataFrame({
         "trip_id": trip_id,
@@ -340,9 +387,7 @@ def build_trip(trip_dir, radius, k):
         "label": labels,
         "dist_m": distances,
         "dist_rank": ranks,
-        "dist_minus_min": (
-            distances - min_dist[point_idx]
-        ),
+        "dist_minus_min": distances - min_dist[point_idx],
         "heading_diff": heading_diff,
         "arc_len": arc_lengths[line_idx],
         "pos_on_arc": positions,
@@ -351,74 +396,127 @@ def build_trip(trip_dir, radius, k):
         "n_cands": n_cands[point_idx]
     })
 
-    return result[OUTPUT_COLUMNS], missed, len(points)
+    result = result[OUTPUT_COLUMNS]
+    result = compact_dtypes(result)
+
+    return result, missed, len(points)
 
 
 def build_partition(directory, radius, k):
     trip_dirs = sorted(
         path
-        for path in glob.glob(
-            os.path.join(directory, "*")
-        )
+        for path in glob.glob(os.path.join(directory, "*"))
         if os.path.isdir(path)
     )
 
     if not trip_dirs:
-        raise ValueError(
-            f"No trip folders found in {directory}"
-        )
+        raise ValueError(f"No trip folders found in {directory}")
 
     frames = []
-    total_missed = 0
-    total_points = 0
+    trip_stats = []
 
     for trip_dir in trip_dirs:
-        frame, missed, count = build_trip(
+        frame, missed, point_count = build_trip(
             trip_dir,
             radius,
             k
         )
 
         frames.append(frame)
-        total_missed += missed
-        total_points += count
+        trip_id = os.path.basename(trip_dir)
+
+        trip_stats.append({
+            "trip_id": trip_id,
+            "total_points": point_count,
+            "missed_points": missed
+        })
 
         print(
-            os.path.basename(trip_dir),
+            trip_id,
             "rows:", len(frame),
             "missed:", missed
         )
 
-    combined = pd.concat(
-        frames,
-        ignore_index=True
-    )
+    combined = pd.concat(frames, ignore_index=True)
+    stats = pd.DataFrame(trip_stats)
 
-    return combined, total_missed, total_points
+    return combined, stats
+
+
+def summarize_partition(name, frame, stats):
+    total_points = int(stats["total_points"].sum())
+    missed_points = int(stats["missed_points"].sum())
+
+    return {
+        "partition": name,
+        "total_points": total_points,
+        "missed_points": missed_points,
+        "candidate_miss_rate": (
+            missed_points / total_points if total_points else 0.0
+        ),
+        "rows": len(frame),
+        "positive_ratio": float(frame["label"].mean()) if len(frame) else 0.0,
+        "nan_count": int(frame.isna().sum().sum())
+    }
 
 
 def main():
-    with open(
-        "configs/config.yaml",
-        encoding="utf-8"
-    ) as file:
+    start_time = time.perf_counter()
+
+    with open("configs/config.yaml", encoding="utf-8") as file:
         config = yaml.safe_load(file)
 
     radius = float(config["radius_m"])
     k = int(config["K"])
+    excluded_train_trips = {
+        str(trip_id)
+        for trip_id in config.get("exclude_train_trips", [])
+    }
 
     os.makedirs("results/csv", exist_ok=True)
 
-    train, train_missed, train_points = build_partition(
+    train_all, train_stats_all = build_partition(
         config["train_dir"],
         radius,
         k
     )
 
-    student_test, test_missed, test_points = build_partition(
+    train_before_summary = summarize_partition(
+        "train_before_drop",
+        train_all,
+        train_stats_all
+    )
+
+    keep_mask = ~train_all["trip_id"].isin(excluded_train_trips)
+    train = train_all.loc[keep_mask].copy()
+
+    kept_stats = train_stats_all[
+        ~train_stats_all["trip_id"].isin(excluded_train_trips)
+    ].copy()
+
+    missing_exclusions = excluded_train_trips - set(train_stats_all["trip_id"])
+    if missing_exclusions:
+        raise ValueError(
+            "Configured train trips were not found: "
+            + ", ".join(sorted(missing_exclusions))
+        )
+
+    train_after_summary = summarize_partition(
+        "train_after_drop",
+        train,
+        kept_stats
+    )
+
+    student_test, test_stats = build_partition(
         config["test_dir"],
         radius,
         k
+    )
+
+    test_summary = summarize_partition(
+        "student_test",
+        student_test,
+        test_stats
     )
 
     train.to_parquet(
@@ -432,24 +530,9 @@ def main():
     )
 
     miss_report = pd.DataFrame([
-        {
-            "partition": "train",
-            "total_points": train_points,
-            "missed_points": train_missed,
-            "candidate_miss_rate": (
-                train_missed / train_points
-                if train_points else 0
-            )
-        },
-        {
-            "partition": "student_test",
-            "total_points": test_points,
-            "missed_points": test_missed,
-            "candidate_miss_rate": (
-                test_missed / test_points
-                if test_points else 0
-            )
-        }
+        train_before_summary,
+        train_after_summary,
+        test_summary
     ])
 
     miss_report.to_csv(
@@ -457,28 +540,38 @@ def main():
         index=False
     )
 
-    for name, frame in [
-        ("train", train),
-        ("student_test", student_test)
-    ]:
-        print(f"\n{name}")
-        print("Rows:", len(frame))
-        print(
-            "Positive ratio:",
-            frame["label"].mean()
-        )
-        print(
-            "Unique trips:",
-            frame["trip_id"].nunique()
-        )
-        print(
-            "Maximum candidates per point:",
-            frame.groupby(
-                ["trip_id", "point_idx"]
-            ).size().max()
-        )
+    elapsed = time.perf_counter() - start_time
 
-    print("\nCandidate miss rates:")
+    print("\nFINAL SUMMARY")
+    for summary in [
+        train_before_summary,
+        train_after_summary,
+        test_summary
+    ]:
+        print(f"\n{summary['partition']}")
+        print("Rows:", summary["rows"])
+        print("Positive ratio:", summary["positive_ratio"])
+        print("Candidate miss rate:", summary["candidate_miss_rate"])
+        print("NaN count:", summary["nan_count"])
+        print("Unique trips:", (
+            train_all["trip_id"].nunique()
+            if summary["partition"] == "train_before_drop"
+            else train["trip_id"].nunique()
+            if summary["partition"] == "train_after_drop"
+            else student_test["trip_id"].nunique()
+        ))
+
+    print("\nRUNTIME_SECONDS:", round(elapsed, 2))
+
+    for path in [
+        "results/features_train.parquet",
+        "results/features_student_test.parquet",
+        "results/csv/candidate_miss_rate.csv"
+    ]:
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        print(f"{path}: {size_mb:.2f} MB")
+
+    print("\nCandidate miss report:")
     print(miss_report.to_string(index=False))
 
 
