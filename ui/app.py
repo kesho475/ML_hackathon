@@ -38,7 +38,7 @@ if not r.ok:
     st.stop()
 trips = r.json()
 
-trip_id = st.selectbox("Trip", trips)
+trip_id = st.selectbox("Trip", trips, key="trip", on_change=lambda: st.session_state.pop("result", None))  # new trip -> clear old result
 if st.button("Run prediction", type="primary", key="run"):
     try:
         with st.spinner("Running the prediction pipeline on the API..."):
@@ -53,7 +53,7 @@ if st.button("Run prediction", type="primary", key="run"):
         st.error(f"Request to the API failed ({type(e).__name__}). Is it still running?")
 
 res = st.session_state.get("result")
-if res:
+if res and res["trip_id"] == trip_id:  # never show a result that belongs to another trip
     st.subheader(f"Trip {res['trip_id']}")
     m = res["metrics"]
     c = st.columns(5)
@@ -64,7 +64,7 @@ if res:
     c[4].metric("Decoder", res["decoder"])
 
     gps, route = res["gps_points"], res["predicted_route"]  # already [lat, lon]
-    fmap = folium.Map(tiles="cartodbpositron")
+    fmap = folium.Map(tiles="OpenStreetMap")
     pts = folium.FeatureGroup("GPS points (blue)")
     for lat, lon in gps:
         folium.CircleMarker((lat, lon), radius=2, color="blue", weight=1, fill=True, fill_opacity=0.7).add_to(pts)
@@ -76,8 +76,8 @@ if res:
     lats, lons = [p[0] for p in gps], [p[1] for p in gps]
     fmap.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
     fmap.get_root().html.add_child(folium.Element(
-        '<div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;padding:8px;'
-        'border:1px solid #888;font-size:13px"><b>Legend</b><br><span style="color:blue">&#9679;</span> GPS points'
+        '<div style="position:fixed;bottom:30px;left:30px;z-index:9999;background:white;color:#222;padding:8px;'
+        'border:1px solid #444;font-size:13px"><b>Legend</b><br><span style="color:blue">&#9679;</span> GPS points'
         '<br><span style="color:red">&#9473;</span> Predicted route</div>'))
     folium.LayerControl().add_to(fmap)
     st_folium(fmap, height=620, use_container_width=True, returned_objects=[], key=f"map_{res['trip_id']}")
