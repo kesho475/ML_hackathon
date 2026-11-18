@@ -1,0 +1,7 @@
+model: hgb
+params:
+  learning_rate: 0.010725209743171996
+  max_iter: 488
+  max_leaf_nodes: 109
+  min_samples_leaf: 58
+  l2_regularization: 0.0008111941985431928
