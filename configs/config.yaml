@@ -1,6 +1,6 @@
 train_dir: data/raw/train
 test_dir: data/raw/student_test
 K: 8
-radius_m: 50
+radius_m: 200   # EDA (train): only 89.2% of GPS points are within 50 m of the route, p95 is 140 m, so 50 m missed ~11% of true arcs
 seed: 42
 cv_folds: 5
