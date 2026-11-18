@@ -21,8 +21,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
+from sklearn.metrics import confusion_matrix
+
+from io_utils import load_trip
 from metrics import (
     candidate_metrics,
+    top1_table,
     top1_accuracy,
     route_continuity
 )
@@ -30,6 +34,14 @@ from metrics import (
 warnings.filterwarnings("ignore")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TEST_DIR = os.path.join(ROOT, "data", "raw", "student_test")  # arcs for route continuity
+_ARCS = {}
+
+
+def arcs_of(trip_id):
+    if trip_id not in _ARCS:
+        _ARCS[trip_id] = load_trip(os.path.join(TEST_DIR, trip_id))[2]
+    return _ARCS[trip_id]
 
 TRAIN_PATH = os.path.join(ROOT, "results", "features_train.parquet")
 TEST_PATH = os.path.join(ROOT, "results", "features_student_test.parquet")
@@ -262,8 +274,10 @@ def evaluate_test(model, name, train, test):
 
     metrics = candidate_metrics(y_test, probabilities)
 
-    top1 = top1_accuracy(test, probabilities)
-    continuity = route_continuity(test, probabilities)
+    top = top1_table(test, probabilities)
+    top1 = top1_accuracy(top)
+    continuity = route_continuity(top, arcs_of)
+    cm = confusion_matrix(y_test, (probabilities >= 0.5).astype(int), labels=[0, 1])
 
     model_path = os.path.join(MODEL_DIR, f"{name}.joblib")
     joblib.dump(fitted_model, model_path)
@@ -292,7 +306,7 @@ def evaluate_test(model, name, train, test):
         "Route Continuity": continuity,
         "Train Time": train_time,
         "Inference Time": inference_time,
-        "Confusion Matrix": metrics["confusion_matrix"],
+        "Confusion Matrix": cm,
         "CV Macro F1": np.nan,
         "CV Std": np.nan
     }
@@ -427,7 +441,7 @@ def main():
                 f"{r['CV Macro F1']:.4f} ± {r['CV Std']:.4f}"
             ),
             "Top-1 Accuracy": r["Top-1 Accuracy"],
-            "Route Continuity": "N/A - arc connectivity unavailable",
+            "Route Continuity": r["Route Continuity"],
             "Test Macro F1": r["Test Macro F1"],
             "Precision": r["Precision"],
             "Recall": r["Recall"],
@@ -486,7 +500,6 @@ def main():
             f"-> {status}"
         )
 
-    print("\nRoute continuity: N/A until road-arc connectivity is available.")
     print("All model files, CSVs and plots have been saved.")
 
 

@@ -3,7 +3,7 @@ numpy
 pyproj
 shapely
 networkx
-scikit-learn
+scikit-learn==1.7.2
 optuna
 folium
 matplotlib
