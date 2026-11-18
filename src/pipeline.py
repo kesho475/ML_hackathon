@@ -26,7 +26,12 @@ def _classifier_argmax(cands, probs, arcs):
 
 # HOOK for B's HMM: register DECODERS["hmm"] = fn(cands_df, probs, arcs) -> pd.Series (index point_idx, value arc_id),
 # then set `decoder: hmm` in configs/config.yaml. Nothing else in the API changes.
-DECODERS = {"classifier": _classifier_argmax}
+from hmm import viterbi_decode
+
+DECODERS = {
+    "classifier": _classifier_argmax,
+    "hmm": viterbi_decode,
+}
 
 
 def decode(cands, probs, arcs, decoder=None):
