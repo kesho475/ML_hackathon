@@ -23,7 +23,7 @@ One row per (GPS point, candidate arc). Each trip is projected to its own UTM zo
 - **Candidates:** the K nearest arcs within `radius_m` (config: K=8, radius_m=200). A point with no arc in range has no rows (counted as a miss).
 - **Label (assumption):** reference arc = nearest arc among the trip's `.route` arcs. `.route` has no per-point alignment, so this can be wrong at junctions and on parallel roads.
 - **heading_diff:** the first point uses the first step; if the GPS moved < 1 m or the arc has zero length, it is set to 90 (uninformative).
-- **Candidate miss rate:** `results/csv/candidate_miss_rate.csv`.
+- **Candidate miss rate:** `results/csv/candidate_miss_rate.csv` (per partition, plus train before/after the drop).
 
-## Known data issue
-Train trips 00000033 and 00000054: GPS lies a median of about 120-140 m from the reference route, so most labels are "miss" (miss 66%). Without them the train miss rate is 0.7%.
+## Excluded train trips
+`exclude_train_trips` in `configs/config.yaml` drops trips 00000033 and 00000054 from **train only** (student_test is not filtered). Their GPS lies a median of 122 m / 139 m from the reference route and the route is too short for the track, so about 66% of their points miss the reference arc and the labels are unreliable. `results/csv/candidate_miss_rate.csv` has the train miss rate before (`train_before_drop`) and after (`train_after_drop`) the drop.

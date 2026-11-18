@@ -4,3 +4,7 @@ K: 8
 radius_m: 200   # EDA (train): only 89.2% of GPS points are within 50 m of the route, p95 is 140 m, so 50 m missed ~11% of true arcs
 seed: 42
 cv_folds: 5
+# Train trips dropped (student_test is never filtered). GPS lies a median of 122 m (trip 33) / 139 m (trip 54) from the
+# reference route, and the route is too short for the track (169 / 422 route arcs for 5844 / 19313 points),
+# so ~66% of their points miss the reference arc and the labels are unreliable.
+exclude_train_trips: ["00000033", "00000054"]

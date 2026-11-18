@@ -80,15 +80,23 @@ def trip_features(trip_dir):
 def main():
     t0 = time.time(); miss = []
     os.makedirs("results/csv", exist_ok=True)
+    excl = set(cfg.get("exclude_train_trips", []))
     for part, key in [("train", "train_dir"), ("student_test", "test_dir")]:
         dfs, n_pts, n_hit, n_empty = [], 0, 0, 0
+        b_pts = b_hit = 0  # train before the drop (all trips)
         for tid in sorted(os.listdir(cfg[key])):
             df, n, h, e = trip_features(os.path.join(cfg[key], tid))
+            b_pts += n; b_hit += h
+            if part == "train" and tid in excl:  # unreliable labels, see config; student_test is never filtered
+                continue
             dfs.append(df); n_pts += n; n_hit += h; n_empty += e
         out = pd.concat(dfs, ignore_index=True)
         out.to_parquet(f"results/features_{part}.parquet", index=False)
-        miss.append({"partition": part, "n_trips": len(dfs), "n_points": n_pts, "n_rows": len(out), "pos_ratio": out.label.mean(),
-                     "points_ref_in_candidates": n_hit, "points_no_candidates": n_empty,
+        if part == "train":
+            miss.append({"partition": "train_before_drop", "n_trips": len(dfs) + len(excl), "n_points": b_pts, "n_rows": np.nan, "pos_ratio": np.nan,
+                         "points_ref_in_candidates": b_hit, "points_no_candidates": np.nan, "candidate_miss_rate": 1 - b_hit / b_pts, "K": K, "radius_m": RADIUS})
+        miss.append({"partition": "train_after_drop" if part == "train" else part, "n_trips": len(dfs), "n_points": n_pts, "n_rows": len(out),
+                     "pos_ratio": out.label.mean(), "points_ref_in_candidates": n_hit, "points_no_candidates": n_empty,
                      "candidate_miss_rate": 1 - n_hit / n_pts, "K": K, "radius_m": RADIUS})
         print(f"{part}: {len(out)} rows, {n_pts} points, pos ratio {out.label.mean():.4f}, miss rate {1 - n_hit / n_pts:.4f}  [{time.time() - t0:.0f}s]")
     pd.DataFrame(miss).to_csv("results/csv/candidate_miss_rate.csv", index=False)
