@@ -1,0 +1,24 @@
+{
+    "project": "PathSnap",
+    "export_version": "1.0",
+    "model_file": "final_model.joblib",
+    "model_type": "HistGradientBoostingClassifier",
+    "framework": "scikit-learn",
+    "sklearn_version": "1.7.2",
+    "joblib_version": "1.5.3",
+    "numpy_version": "2.2.6",
+    "features": [
+        "dist_m",
+        "dist_rank",
+        "dist_minus_min",
+        "heading_diff",
+        "arc_len",
+        "pos_on_arc",
+        "speed",
+        "dt",
+        "n_cands"
+    ],
+    "feature_count": 9,
+    "preprocessing_included": false,
+    "decoder": "Configured separately through config.yaml"
+}
