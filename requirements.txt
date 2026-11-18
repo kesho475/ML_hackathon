@@ -12,3 +12,8 @@ joblib
 pyyaml
 jupyter
 ipykernel
+fastapi
+uvicorn
+streamlit
+streamlit-folium
+requests

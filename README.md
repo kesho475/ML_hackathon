@@ -19,3 +19,22 @@ ln -s "$PWD/Student folder/student_test" data/raw/student_test
 ```
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
+
+## Run the API
+Laptop 1 (model + API). Needs `models/final_model.joblib` and the trips in `data/raw/` (see Data setup).
+```
+.venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+- `GET /health`, `GET /trips`, `POST /predict` with `{"trip_id": "00000000"}`.
+- The trips served come from `eval_trips_dir` in `configs/config.yaml` (default `data/raw/student_test`).
+- Every request is logged to the terminal (time, client IP, endpoint, trip_id, n_points, top1, processing time).
+- The decoder (`decoder:` in the config) is `classifier`; the HMM registers itself in `DECODERS` in `src/pipeline.py`.
+
+## Run the UI
+Laptop 2 (evaluator UI). It reads no data or models, only the API.
+```
+.venv/bin/pip install -r requirements.txt
+.venv/bin/streamlit run ui/app.py
+```
+Open the page, set the API URL in the sidebar (default `http://localhost:8000`; use Laptop 1's LAN address, e.g. `http://192.168.x.x:8000`), click "Check connection", pick a trip and click "Run prediction".
