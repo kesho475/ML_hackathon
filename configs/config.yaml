@@ -1,6 +1,7 @@
 train_dir: data/raw/train
 test_dir: data/raw/student_test
 K: 8
-radius_m: 50
+radius_m: 200
 seed: 42
 cv_folds: 5
+exclude_train_trips: ["00000033", "00000054"]
